@@ -1,3 +1,4 @@
 .ensime*
 project/target
 target
+.idea
