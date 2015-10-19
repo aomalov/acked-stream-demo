@@ -1,6 +1,6 @@
 package Fibonacci
 
-import java.math.BigInteger
+
 import akka.actor._
 import akka.stream.actor._
 
@@ -11,8 +11,9 @@ import scala.concurrent.Promise
 class FibonacciSubscriber(delay: Long) extends ActorSubscriber with ActorLogging {
   val requestStrategy = WatermarkRequestStrategy(50)
 
+
   def receive = {
-    case OnNext((p: Promise[BigInteger],fib:BigInteger)) =>
+    case OnNext((p: Promise[Any],fib:Any)) =>
       log.debug("[----->FibonacciSubscriber] Received Fibonacci Number: {}", fib)
       p.success(fib)
       Thread.sleep(delay)
