@@ -1,14 +1,14 @@
 package Fibonacci
 
 import java.math.BigInteger
+
 import akka.actor._
+import akka.stream.actor.ActorPublisherMessage._
 import akka.stream.actor._
 
-import ActorPublisherMessage._
+import scala.concurrent.{ExecutionContext, Promise}
 
-import scala.concurrent.{Future, ExecutionContext, Promise}
-
-class FibonacciPublisher extends ActorPublisher[(Promise[Any],Any)] with ActorLogging {
+class FibonacciSimplePublisher extends ActorPublisher[BigInteger] with ActorLogging {
   var prev = BigInteger.ZERO
   var curr = BigInteger.ZERO
   var buf = Vector.empty[String]
@@ -36,9 +36,8 @@ class FibonacciPublisher extends ActorPublisher[(Promise[Any],Any)] with ActorLo
     buf:+=msg+" from outer"
     val p=createAckRoutine()
     bufPromise:+=p
-    sender() ! p.future
-    sendNonFibs()
   }
+
   def createAckRoutine():Promise[Any] = {
     implicit val executionContext = context.system.dispatcher
 
@@ -55,22 +54,8 @@ class FibonacciPublisher extends ActorPublisher[(Promise[Any],Any)] with ActorLo
     }
   }
 
-  def sendNonFibs() {
-    implicit val executionContext = context.system.dispatcher
 
-    log.debug("****buf size before {}", buf.size)
-    while(buf.size>0 &&  isActive && totalDemand > 0) {
-      onNext(nextNonFib(executionContext,bufPromise(0), buf(0)))
-      val (use,keep)=buf.splitAt(1)
-      val (useP,keepP)=bufPromise.splitAt(1)
-      log.debug(use+ "  "+ keep)
-      buf=keep
-      bufPromise=keepP
-      log.debug("****buf size after {}", buf.size)
-    }
-  }
-
-  def nextFib(implicit executionContext: ExecutionContext): (Promise[Any],Any) = {
+  def nextFib(implicit executionContext: ExecutionContext): BigInteger = {
 
     if(curr == BigInteger.ZERO) {
       curr = BigInteger.ONE
@@ -81,9 +66,7 @@ class FibonacciPublisher extends ActorPublisher[(Promise[Any],Any)] with ActorLo
     }
     //Finishing stream if more than 10000
     //if(curr.compareTo(BigInteger.valueOf(10000))<0 ) onCompleteThenStop()
-    val p = Promise[Any]
-    p.future.onComplete({ v =>  println(s"A_C_K_E_D (${v})") })
-    (p,curr)
+    curr
   }
 
   def nextNonFib(implicit executionContext: ExecutionContext,pr:Promise[Any],vStr: String): (Promise[Any],Any) = {

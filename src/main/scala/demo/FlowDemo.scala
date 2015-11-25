@@ -34,6 +34,7 @@ object FlowDemo extends App {
   AckedSource(input).
     groupBy(_ % 2 == 0).
     mapAsync(2) {
+      //group key , group values stream
       case (false, source) =>
         source.
           via(outputFlow).
@@ -43,7 +44,7 @@ object FlowDemo extends App {
           via(outputFlow).
           runWith(sinkInstance("even"))
     }.
-    runForeach { _ => println(s"Done with group") }.
+    runForeach { _ => println(s"Done with group ") }.
     onComplete { _ =>
       actorSystem.shutdown()
     }

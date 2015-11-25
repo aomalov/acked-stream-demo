@@ -1,6 +1,8 @@
 package Fibonacci
 
 
+import java.math.BigInteger
+
 import akka.actor._
 import akka.stream.actor._
 
@@ -16,6 +18,9 @@ class FibonacciSubscriber(delay: Long) extends ActorSubscriber with ActorLogging
     case OnNext((p: Promise[Any],fib:Any)) =>
       log.debug("[----->FibonacciSubscriber] Received Fibonacci Number: {}", fib)
       p.success(fib)
+      Thread.sleep(delay)
+    case OnNext(b:BigInteger) =>
+      log.debug("[----->FibonacciSubscriber] Received Fibonacci Number: {}", b)
       Thread.sleep(delay)
     case OnError(err: Exception) => 
       log.error(err, "[FibonacciSubscriber] Receieved Exception in Fibonacci Stream")

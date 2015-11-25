@@ -2,7 +2,7 @@ package demo
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import com.timcharper.acked.AckedSource
+import com.timcharper.acked.{AckedBroadcast, AckedSource}
 import scala.concurrent.{Promise,ExecutionContext,Future}
 
 object SourceDemo extends App {
@@ -19,6 +19,8 @@ object SourceDemo extends App {
   }
 
   val source = AckedSource(input)
+
+  AckedBroadcast
 
   val done = source.
     map { n =>
