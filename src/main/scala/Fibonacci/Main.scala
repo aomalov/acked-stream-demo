@@ -227,57 +227,24 @@ object Examples {
     val sink1: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
     val sink2: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
 
-//    val pg = Sink(sink1, sink2)((m1, m2) => (m1, m2))  {
-//      implicit builder => (out1, out2) => {
-//
-//        val broadcast = builder.add(Broadcast[Int](2))
-//
-//        val f1 = Flow[Int].map(_ + 10)
-//        //val f3 = Flow[Int].map(_.toString)
-//        val f2 = Flow[Int].map(_ + 20)
-//
-//        //broadcast ~> out1
-//
-//        // val sink3=Sink.head;
-//
-//        //val fl1=builder.add(f1)
-//        //builder.addEdge(fl1.outlet,builder.add(sink1))
-//        //broadcast.out(0) ~> f1
-//        //      builder.addEdge(broadcast.out(0), f1, builder.add(out1))
-//        //      builder.addEdge(broadcast.out(1), f2, out2)
-//        //builder.addEdge(broadcast.out(2),f3,builder.add(Sink.ignore))
-//
-//        //builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
-//        //      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
-//        //      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
-//
-//        (broadcast.in)
-//        //fl1.inlet
-//      }
-//    }
+    val prom1 = Source(1 to 3).toMat(outputSink(system))(Keep.right).run()
 
-    //      : Future[(Int,Unit,Unit)]
-    //val x = Source(1 to 3).toMat(pg)(Keep.right).run()
+    prom1.future.onComplete {
+      case Success(_) => println("successful sink")
+        system.shutdown()
+      case Failure(t) => println("failed sink")
+        system.shutdown()
+    }
 
-    //    val g = FlowGraph.closed() { builder: FlowGraph.Builder[Unit] =>
-    //      val in = Source(1 to 3)
-    //
-    //      val broadcast = builder.add(Broadcast[Int](3))
-    //
-    //      val f1 = Flow[Int].map(_ + 10)
-    //      val f3 = Flow[Int].map(_.toString)
-    //      val f2 = Flow[Int].map(_ + 20)
-    //      val sink1 = Sink.fold[Int,Int](0)(_+_)
-    //
-    //      builder.addEdge(builder.add(in), broadcast.in)
-    //      builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
-    //      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
-    //      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
-    //    }.run()
-
-    val (x1,x2) = Source(1 to 3).toMat(outputSink(system))(Keep.right).run()
     //println(Await.result(x1,3 seconds))
     //println(Await.result(x2,3 seconds))
+
+  }
+
+  def builderTest2(implicit system:ActorSystem) = {
+
+    implicit val ec = system.dispatcher
+    implicit val materializer = ActorMaterializer()
 
     val y = Source(1 to 3).map(_ * 10).runFold(0)(_ + _)
 
@@ -294,8 +261,6 @@ object Examples {
       // connect the graph
       broadcast.out(0).map(_ * 10).map(identity) ~> zip.in0
       broadcast.out(1).map(_ + 1).map(_.toString) ~> zip.in1
-
-
 
       // expose ports
       (broadcast.in, zip.out)
@@ -330,43 +295,48 @@ object Examples {
 
     val max: Future[Int] = g.run()
     println(Await.result(max, 300.millis))
-
-
-//    val foldFlow: Flow[Int, Int, Future[Int]] = Flow(Sink.fold[Int, Int](0)(_ + _)) {
-//      implicit builder =>
-//        fold =>
-//          (fold.inlet, builder.materializedValue.mapAsync(4)(identity).outlet)
-//    }
-
   }
 
-  def outputSink(implicit system: ActorSystem): Sink[Int, (Future[Int], Future[Int])] = {
+  def outputSink(implicit system: ActorSystem): Sink[Int, Promise[Unit]] = {
     import akka.stream.scaladsl.FlowGraph.Implicits._
     implicit val ec = system.dispatcher
 
-    val outSink1=Sink.fold[Int, Int](0)(_+_).mapMaterializedValue(fut=>{
-      fut.onComplete(v=>println("Sink 1 is finished with ["+v+"]"))
-      fut
-    })
-    val outSink2 = Sink.fold[Int, Int](0)(_+2*_).mapMaterializedValue(fut=>{
-      fut.onComplete(v=>println("Sink 2 is finished with ["+v+"]"))
-      fut
-    })
 
-    val totalSink3: Sink[Future[Int],Promise[Unit]] = Sink.head.mapMaterializedValue(fut=>{
+
+    val totalSink3: Sink[Future[Unit],Promise[Unit]] = Sink.head.mapMaterializedValue(fut=>{
       val p=Promise[Unit]()
       p.completeWith(fut.map(f=>null))
       p
     })
 
-    Sink(outSink1, outSink2)((m1, m2) => (m1, m2)) {
-      implicit builder => (out1, out2) => {
+    Sink(totalSink3) {
+      implicit builder => out1 => {
         val bcast = builder.add(Broadcast[Int](2))
 
-        bcast ~> out1
-        bcast ~> out2
+        val p1=Promise[Unit]()
+        val outSink1=Sink.fold[Int, Int](0)(_+_).mapMaterializedValue(fut=>{
+          fut.onComplete(v=>println("Sink 1 is finished with ["+v+"]"))
+          p1.completeWith(fut.map(f=>null))
+          fut
+        })
 
-        builder.materializedValue.map(tup => println(whenAllComplete(tup._1,tup._2)) ).outlet ~> Sink.ignore
+        val p2=Promise[Unit]()
+        val outSink2 = Sink.fold[Int, Int](0)(_+2*_).mapMaterializedValue(fut=>{
+          fut.onComplete(v=>println("Sink 2 is finished with ["+v+"]"))
+          p2.completeWith(fut.map(f=>null))
+          fut
+        })
+
+
+        bcast ~> outSink1
+        bcast ~> outSink2
+
+
+        builder.materializedValue.map(_ => {
+          val totalFuture=whenAllComplete(p1.future,p2.future)
+          //println(totalFuture)
+          totalFuture
+        }).outlet ~> out1
 
         bcast.in
       }
@@ -429,12 +399,11 @@ object Examples {
       _ onComplete {
         case Success(_) =>
           if (remaining.decrementAndGet() == 0) {
-            println("it was a success //" + Thread.currentThread().getName)
-            //if(!p.isCompleted)
+//            println("it was a success //" + Thread.currentThread().getName)
             p success()
           }
         case Failure(t) =>
-          println("it was a failure //"+ Thread.currentThread().getName)
+//          println("it was a failure //"+ Thread.currentThread().getName)
           if(!p.isCompleted) {
             p.failure(t)
           }
@@ -444,10 +413,4 @@ object Examples {
     p.future
   }
 
-
-//  def evalTest() ={
-//    //val i = new Eval()("1 + 1")
-//    val sum = Eval[Int]("1 + 1")
-//    println(sum)
-//  }
 }
