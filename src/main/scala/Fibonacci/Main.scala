@@ -1,6 +1,7 @@
 package Fibonacci
 
 import java.math.BigInteger
+import java.util.concurrent.atomic.AtomicInteger
 import akka.actor._
 import akka.stream._
 import akka.stream.actor._
@@ -9,6 +10,7 @@ import akka.stream.stage.{PushStage, Stage}
 import com.timcharper.acked._
 import routing.AckedRouter
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future, Promise, Await}
 import akka.pattern.ask
@@ -16,6 +18,7 @@ import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.language.postfixOps
 import scala.util.{Failure, Success}
+import scala.language.dynamics
 
 object Main extends App {
   val system = ActorSystem("example-stream-system")
@@ -24,6 +27,9 @@ object Main extends App {
   //Examples.startPubSubTransformerExample(system)
   //Examples.broadcastTest(system)
   Examples.builderFlowTest(system)
+  //Examples.fullyDynamic()
+  //Examples.varargToList
+  //Examples.evalTest()
   //Thread.sleep(10000)
   //system.shutdown()
 }
@@ -33,11 +39,11 @@ object Examples {
   def startSimplePubSubExample(system: ActorSystem) {
     system.log.info("Starting Publisher")
     val publisherActor = system.actorOf(Props[FibonacciPublisher])
-    val publisher = ActorPublisher[(Promise[Unit],BigInteger)](publisherActor)
+    val publisher = ActorPublisher[(Promise[Unit], BigInteger)](publisherActor)
 
     system.log.info("Starting Subscriber")
     val subscriberActor = system.actorOf(Props(new FibonacciSubscriber(1)))
-    val subscriber = ActorSubscriber[(Promise[Unit],BigInteger)](subscriberActor)
+    val subscriber = ActorSubscriber[(Promise[Unit], BigInteger)](subscriberActor)
 
     system.log.info("Subscribing to Publisher")
     publisher.subscribe(subscriber)
@@ -46,27 +52,26 @@ object Examples {
     Thread.sleep(2000)
     var a = 0;
     // for loop execution with a range
-    for( a <- 1 to 10){
+    for (a <- 1 to 10) {
       publisherActor ! "test"
     }
     Thread.sleep(2000)
 
     implicit val timeout = Timeout(5 seconds)
-    val f = ask(publisherActor,"testSpecial")
+    val f = ask(publisherActor, "testSpecial")
     //Got the future
-    val res = Await.result(f,1 seconds)
-    if(res.isInstanceOf[Future[Any]])
-    {
-//      println("%%%%%%%%%%% Got my future - waiting on it")
-//      var resAck=Await.result(res.asInstanceOf[Future[Any]],5 seconds)
-//      println("%%%%%%%%%%% Got my future result - "+resAck)
+    val res = Await.result(f, 1 seconds)
+    if (res.isInstanceOf[Future[Any]]) {
+      //      println("%%%%%%%%%%% Got my future - waiting on it")
+      //      var resAck=Await.result(res.asInstanceOf[Future[Any]],5 seconds)
+      //      println("%%%%%%%%%%% Got my future result - "+resAck)
       res.asInstanceOf[Future[Any]].onComplete({
         case Success(res) => println("%%%%%%% completed the future")
         case Failure(t) => // do something
       })(system.dispatcher)
     }
 
-    for( a <- 1 to 10){
+    for (a <- 1 to 10) {
       publisherActor ! "test"
     }
     Thread.sleep(8000)
@@ -92,10 +97,10 @@ object Examples {
     val subscriberActor = system.actorOf(Props(new FibonacciSubscriber(500)))
     val subscriber = ActorSubscriber[BigInteger](subscriberActor)
 
-    val g1=Source(publisher).to(Sink(doubleSubscriber))
-    val g2=Source(doublePublisher).to(Sink(subscriber))
+    val g1 = Source(publisher).to(Sink(doubleSubscriber))
+    val g2 = Source(doublePublisher).to(Sink(subscriber))
 
-//    doublePublisher.subscribe(doubleSubscriber.)
+    //    doublePublisher.subscribe(doubleSubscriber.)
     //Flow[BigInteger].transform(()=>new Stage[] {})
 
     g1.run()
@@ -104,10 +109,10 @@ object Examples {
 
 
 
-//    system.log.info("Subscribing to Processor to Publisher")
-//    publisher.subscribe(doubleSubscriber)
-//    system.log.info("Subscribing Subscriber to Processor")
-//    doublePublisher.subscribe(subscriber)
+    //    system.log.info("Subscribing to Processor to Publisher")
+    //    publisher.subscribe(doubleSubscriber)
+    //    system.log.info("Subscribing Subscriber to Processor")
+    //    doublePublisher.subscribe(subscriber)
   }
 
   def broadcastTest(implicit system: ActorSystem): Unit = {
@@ -117,10 +122,10 @@ object Examples {
 
     val input = (Stream.continually(Promise[Unit]) zip Range.inclusive(1, 15)).toList
 
-    for((p,v)<-input) {
+    for ((p, v) <- input) {
       p.future.onComplete {
-        case Success(value) => println("[success] "+v)
-        case Failure(t)=> println("[failure - "+t.getMessage+"] "+v)
+        case Success(value) => println("[success] " + v)
+        case Failure(t) => println("[failure - " + t.getMessage + "] " + v)
       }
     }
 
@@ -129,63 +134,71 @@ object Examples {
     val Seq(s1, s2) = (1 to 2) map { n => AckedSink.fold[Int, Int](0)(_ + _) }
 
 
-    val g = AckedFlowGraph.closed(s1, s2 )((m1, m2 ) => (m1, m2)) { implicit b =>
+    val g = AckedFlowGraph.closed(s1, s2)((m1, m2) => (m1, m2)) { implicit b =>
       (s1, s2) =>
 
         import AckedFlowGraph.Implicits._
 
-        val router = b.add(AckedRouter[Int](2,num=>{
-          var res=Vector.empty[Int]
+        val router = b.add(AckedRouter[Int](2, num => {
+          var res = Vector.empty[Int]
 
-          if(num%3==0) res:+=0
-          if(num%3==0 || num%4==0) res:+=1
+          if (num % 3 == 0) res :+= 0
+          if (num % 3 == 0 || num % 4 == 0) res :+= 1
 
           res
         }))
 
-        val flow1:AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].map {
-          case (p:Promise[Unit],v:Int) =>
+        val flow1: AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].map {
+          case (p: Promise[Unit], v: Int) =>
             //Thread.sleep(50)
-            println("[flow1] "+v+" // "+p.isCompleted)
-            (p,v)
+            println("[flow1] " + v + " // " + p.isCompleted)
+            (p, v)
         })
 
         //Filter simulation - denies odd values
-        val flow2:AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].filter {
-          case (p:Promise[Unit],v:Int) =>
+        val flow2: AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].filter {
+          case (p: Promise[Unit], v: Int) =>
             //Thread.sleep(50)
-            println("[flow2] "+v+" // "+p.isCompleted)
-            if(v%2!=0) p.failure(new Exception("odd value"))
-            v%2==0
+            println("[flow2] " + v + " // " + p.isCompleted)
+            if (v % 2 != 0) p.failure(new Exception("odd value"))
+            v % 2 == 0
         })
 
-        val flow2_1:AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].map {
-          case (p:Promise[Unit],v:Int) =>
-            println("[flow2_1] "+v+" // "+p.isCompleted)
-            (p,v)
+        val flow2_1: AckedFlow[Int, Int, Unit] = AckedFlow(Flow[AckTup[Int]].map {
+          case (p: Promise[Unit], v: Int) =>
+            println("[flow2_1] " + v + " // " + p.isCompleted)
+            (p, v)
         })
 
         source ~> router
-        router.buffer(10, failOnOverflow = false) ~> flow1  ~> s1
-        router.buffer(10, failOnOverflow = false) ~> flow2 ~> flow2_1 ~> s2
+        Seq(s1, s2).zip(Seq(flow1, flow2)).foreach {
+          case (sN, fN) => router ~> fN ~> sN
+        }
+
+      //        router ~> flow1  ~> s1
+      //        router.buffer(10, failOnOverflow = false) ~> flow2 ~> flow2_1 ~> s2
+      //b.addEdge(router.akkaShape.out(0),flow1,b.add(s1))
     }
 
     val (f1, f2) = g.run()
-    val (r1, r2) = (Await.result(f1,100 seconds), Await.result(f2,100 seconds))
+    val (r1, r2) = (Await.result(f1, 100 seconds), Await.result(f2, 100 seconds))
     println(r1)
     println(r2)
+
+    Thread.sleep(500)
+    system.shutdown()
   }
 
-  def simpleFlowTest(implicit system: ActorSystem):Unit={
+  def simpleFlowTest(implicit system: ActorSystem): Unit = {
     implicit val ec = system.dispatcher
     implicit val materializer = ActorMaterializer()
 
     val input = (Stream.continually(Promise[Unit]) zip Range.inclusive(1, 15)).toList
 
-    for((p,v)<-input) {
+    for ((p, v) <- input) {
       p.future.onComplete {
-        case Success(value) => println("[success] "+v)
-        case Failure(t)=> println("[failure - "+t.getMessage+"] "+v)
+        case Success(value) => println("[success] " + v)
+        case Failure(t) => println("[failure - " + t.getMessage + "] " + v)
       }
     }
 
@@ -201,76 +214,240 @@ object Examples {
 
     // materialize the flow and get the value of the FoldSink
     val sum: Future[Int] = runnable.run()
-    println(Await.result(sum,10 seconds))
+    println(Await.result(sum, 10 seconds))
     Thread.sleep(500)
     system.shutdown()
   }
 
-  def builderFlowTest(implicit system: ActorSystem): Unit ={
+  def builderFlowTest(implicit system: ActorSystem): Unit = {
 
     implicit val ec = system.dispatcher
     implicit val materializer = ActorMaterializer()
 
-    val pg = Sink() { implicit builder =>
+    val sink1: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
+    val sink2: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
 
-      //val broadcast = builder.add(Broadcast[Int](3))
-
-      val f1 = Flow[Int].map(_ + 10)
-      val f3 = Flow[Int].map(_.toString)
-      val f2 = Flow[Int].map(_ + 20)
-      val sink1: Sink[Int,Future[Int]] = Sink.fold[Int,Int](0)(_+_)
-
-      val fl1=builder.add(f1)
-      builder.addEdge(fl1.outlet,builder.add(sink1))
-      //builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
-//      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
-//      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
-
-      //broadcast.in
-      fl1.inlet
-    }
-
-//      : Future[(Int,Unit,Unit)]
-    val x = Source(1 to 3).toMat(pg)(Keep.right).run()
-
-//    val g = FlowGraph.closed() { builder: FlowGraph.Builder[Unit] =>
-//      val in = Source(1 to 3)
+//    val pg = Sink(sink1, sink2)((m1, m2) => (m1, m2))  {
+//      implicit builder => (out1, out2) => {
 //
-//      val broadcast = builder.add(Broadcast[Int](3))
+//        val broadcast = builder.add(Broadcast[Int](2))
 //
-//      val f1 = Flow[Int].map(_ + 10)
-//      val f3 = Flow[Int].map(_.toString)
-//      val f2 = Flow[Int].map(_ + 20)
-//      val sink1 = Sink.fold[Int,Int](0)(_+_)
+//        val f1 = Flow[Int].map(_ + 10)
+//        //val f3 = Flow[Int].map(_.toString)
+//        val f2 = Flow[Int].map(_ + 20)
 //
-//      builder.addEdge(builder.add(in), broadcast.in)
-//      builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
-//      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
-//      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
-//    }.run()
+//        //broadcast ~> out1
+//
+//        // val sink3=Sink.head;
+//
+//        //val fl1=builder.add(f1)
+//        //builder.addEdge(fl1.outlet,builder.add(sink1))
+//        //broadcast.out(0) ~> f1
+//        //      builder.addEdge(broadcast.out(0), f1, builder.add(out1))
+//        //      builder.addEdge(broadcast.out(1), f2, out2)
+//        //builder.addEdge(broadcast.out(2),f3,builder.add(Sink.ignore))
+//
+//        //builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
+//        //      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
+//        //      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
+//
+//        (broadcast.in)
+//        //fl1.inlet
+//      }
+//    }
 
-    println(x)
+    //      : Future[(Int,Unit,Unit)]
+    //val x = Source(1 to 3).toMat(pg)(Keep.right).run()
 
+    //    val g = FlowGraph.closed() { builder: FlowGraph.Builder[Unit] =>
+    //      val in = Source(1 to 3)
+    //
+    //      val broadcast = builder.add(Broadcast[Int](3))
+    //
+    //      val f1 = Flow[Int].map(_ + 10)
+    //      val f3 = Flow[Int].map(_.toString)
+    //      val f2 = Flow[Int].map(_ + 20)
+    //      val sink1 = Sink.fold[Int,Int](0)(_+_)
+    //
+    //      builder.addEdge(builder.add(in), broadcast.in)
+    //      builder.addEdge(broadcast.out(0), f1, builder.add(sink1))
+    //      builder.addEdge(broadcast.out(1), f2, builder.add(Sink.foreach(println)))
+    //      builder.addEdge(broadcast.out(2), f3, builder.add(Sink.foreach(println)))
+    //    }.run()
 
-    val pairUpWithToString = Sink() { implicit b =>
+    val (x1,x2) = Source(1 to 3).toMat(outputSink(system))(Keep.right).run()
+    //println(Await.result(x1,3 seconds))
+    //println(Await.result(x2,3 seconds))
+
+    val y = Source(1 to 3).map(_ * 10).runFold(0)(_ + _)
+
+    println(Await.result(y, 10 seconds))
+
+    val pairUpWithToString = Flow() { implicit b =>
       import FlowGraph.Implicits._
 
       // prepare graph elements
       val broadcast = b.add(Broadcast[Int](2))
       val zip = b.add(Zip[Int, String]())
-      val sink: Sink[(Int,String),(Int,String)]= Flow[(Int,String)].toMat(Sink.foreach(println))
+      //val sink= Flow[(Int,String)].toMat(Sink.foreach(println))
 
       // connect the graph
-      broadcast.out(0).map(identity) ~> zip.in0
-      broadcast.out(1).map(_+1).map(_.toString) ~> zip.in1
-      zip.out ~> sink
+      broadcast.out(0).map(_ * 10).map(identity) ~> zip.in0
+      broadcast.out(1).map(_ + 1).map(_.toString) ~> zip.in1
+
+
 
       // expose ports
-      broadcast.in
+      (broadcast.in, zip.out)
     }
 
-     val (x1,x2) = pairUpWithToString.runWith(Source(List(1)), Sink.head)
+    val (t1, t2) = pairUpWithToString.runWith(Source(List(1)), Sink.head)
 
-    println(Await.result(x2,10 seconds))
+    val pickMaxOfThree = FlowGraph.partial() { implicit b =>
+      import FlowGraph.Implicits._
+
+      val zip1 = b.add(ZipWith[Int, Int, Int](math.max ))
+      val zip2 = b.add(ZipWith[Int, Int, Int](math.max))
+      zip1.out ~> zip2.in0
+
+      UniformFanInShape(zip2.out, zip1.in0, zip1.in1, zip2.in1)
+    }
+
+    val resultSink = Sink.head[Int]
+
+    val g = FlowGraph.closed(resultSink) { implicit b =>
+      sink =>
+        import FlowGraph.Implicits._
+
+        // importing the partial graph will return its shape (inlets & outlets)
+        val pm3 = b.add(pickMaxOfThree)
+
+        Source.single(1) ~> pm3.in(0)
+        Source.single(2) ~> pm3.in(1)
+        Source.single(3) ~> pm3.in(2)
+        pm3.out ~> sink.inlet
+    }
+
+    val max: Future[Int] = g.run()
+    println(Await.result(max, 300.millis))
+
+
+//    val foldFlow: Flow[Int, Int, Future[Int]] = Flow(Sink.fold[Int, Int](0)(_ + _)) {
+//      implicit builder =>
+//        fold =>
+//          (fold.inlet, builder.materializedValue.mapAsync(4)(identity).outlet)
+//    }
+
   }
+
+  def outputSink(implicit system: ActorSystem): Sink[Int, (Future[Int], Future[Int])] = {
+    import akka.stream.scaladsl.FlowGraph.Implicits._
+    implicit val ec = system.dispatcher
+
+    val outSink1=Sink.fold[Int, Int](0)(_+_).mapMaterializedValue(fut=>{
+      fut.onComplete(v=>println("Sink 1 is finished with ["+v+"]"))
+      fut
+    })
+    val outSink2 = Sink.fold[Int, Int](0)(_+2*_).mapMaterializedValue(fut=>{
+      fut.onComplete(v=>println("Sink 2 is finished with ["+v+"]"))
+      fut
+    })
+
+    val totalSink3: Sink[Future[Int],Promise[Unit]] = Sink.head.mapMaterializedValue(fut=>{
+      val p=Promise[Unit]()
+      p.completeWith(fut.map(f=>null))
+      p
+    })
+
+    Sink(outSink1, outSink2)((m1, m2) => (m1, m2)) {
+      implicit builder => (out1, out2) => {
+        val bcast = builder.add(Broadcast[Int](2))
+
+        bcast ~> out1
+        bcast ~> out2
+
+        builder.materializedValue.map(tup => println(whenAllComplete(tup._1,tup._2)) ).outlet ~> Sink.ignore
+
+        bcast.in
+      }
+    }
+  }
+
+  def fullyDynamic()= {
+    // applyDynamic example
+    object OhMy extends Dynamic {
+      def applyDynamic(methodName: String)(args: Any*) {
+        println(s"""|  methodName: $methodName,
+                    |args: ${args.mkString(",")}""".stripMargin)
+      }
+    }
+
+    OhMy.dynamicMethod("with", "some", 1337)
+
+
+    object JSON_Dynamic extends Dynamic {
+      def applyDynamicNamed(methodName: String)(args: (String, Any)*) {
+        for(arg <-args)
+          println(s"""Calling a method ${methodName.toUpperCase()}, for:\n "${arg._1}": "${arg._2}" """)
+      }
+    }
+
+    JSON_Dynamic.node(nickname = "ktoso",nickname1 = "ktoso1")
+
+    object MagicBox extends Dynamic {
+      private var box = mutable.Map[String, Any]()
+
+      def updateDynamic(propertyName: String)(value: Any) {
+        value match {
+          case stringValue:String => box(propertyName) = stringValue
+          case intValue:Int       => box(propertyName) = intValue*2
+        }
+      }
+      def selectDynamic(propertyName: String) = box(propertyName)
+    }
+
+    MagicBox.prop1="123"
+    println(MagicBox.prop1)
+    MagicBox.prop2=11
+    println(MagicBox.prop2)
+  }
+
+  def varargToList() = {
+    def foo(os: String*) =
+      for(elem<-os) println(elem)
+      //println(os.toList)
+
+    val args = Seq("hi", "there")
+    foo(args:_*)
+  }
+
+  def whenAllComplete[T](fs: Future[T]*)(implicit ec: ExecutionContext): Future[Unit] = {
+    val remaining = new AtomicInteger(fs.length)
+    val p = Promise[Unit]()
+
+    fs foreach {
+      _ onComplete {
+        case Success(_) =>
+          if (remaining.decrementAndGet() == 0) {
+            println("it was a success //" + Thread.currentThread().getName)
+            //if(!p.isCompleted)
+            p success()
+          }
+        case Failure(t) =>
+          println("it was a failure //"+ Thread.currentThread().getName)
+          if(!p.isCompleted) {
+            p.failure(t)
+          }
+      }
+    }
+
+    p.future
+  }
+
+
+//  def evalTest() ={
+//    //val i = new Eval()("1 + 1")
+//    val sum = Eval[Int]("1 + 1")
+//    println(sum)
+//  }
 }
