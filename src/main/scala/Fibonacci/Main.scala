@@ -6,12 +6,10 @@ import akka.actor._
 import akka.stream._
 import akka.stream.actor._
 import akka.stream.scaladsl._
-import akka.stream.stage.{PushStage, Stage}
 import com.timcharper.acked._
 import routing.AckedRouter
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future, Promise, Await}
 import akka.pattern.ask
 import akka.util.Timeout
@@ -224,12 +222,13 @@ object Examples {
     implicit val ec = system.dispatcher
     implicit val materializer = ActorMaterializer()
 
-    val sink1: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
-    val sink2: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
 
-    val prom1 = Source(1 to 3).toMat(outputSink(system))(Keep.right).run()
+    val outerFuture =
+      Source(1 to 118).toMat(outputSink(system))(Keep.right).run()
 
-    prom1.future.onComplete {
+    val nestedFuture=Await.result(outerFuture,10 seconds)
+
+    nestedFuture.onComplete {
       case Success(_) => println("successful sink")
         system.shutdown()
       case Failure(t) => println("failed sink")
@@ -297,43 +296,55 @@ object Examples {
     println(Await.result(max, 300.millis))
   }
 
-  def outputSink(implicit system: ActorSystem): Sink[Int, Promise[Unit]] = {
+  def outputSink(implicit system: ActorSystem): Sink[Int, Future[Future[Unit]]] = {
     import akka.stream.scaladsl.FlowGraph.Implicits._
     implicit val ec = system.dispatcher
 
 
 
-    val totalSink3: Sink[Future[Unit],Promise[Unit]] = Sink.head.mapMaterializedValue(fut=>{
-      val p=Promise[Unit]()
-      p.completeWith(fut.map(f=>null))
-      p
-    })
+    val totalSink3: Sink[Future[Unit],Future[Future[Unit]]] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
+//      Sink.ignore.mapMaterializedValue(fut=>{
+//      val p=Promise[Unit]()
+//      p.completeWith(fut.map(_=>null))
+//      p
+//    })
 
     Sink(totalSink3) {
       implicit builder => out1 => {
-        val bcast = builder.add(Broadcast[Int](2))
+        val bcast = builder.add(Broadcast[Int](3))
 
         val p1=Promise[Unit]()
         val outSink1=Sink.fold[Int, Int](0)(_+_).mapMaterializedValue(fut=>{
           fut.onComplete(v=>println("Sink 1 is finished with ["+v+"]"))
-          p1.completeWith(fut.map(f=>null))
+          p1.completeWith(fut.map(_=>()))
           fut
         })
 
         val p2=Promise[Unit]()
         val outSink2 = Sink.fold[Int, Int](0)(_+2*_).mapMaterializedValue(fut=>{
           fut.onComplete(v=>println("Sink 2 is finished with ["+v+"]"))
-          p2.completeWith(fut.map(f=>null))
+          p2.completeWith(fut.map(_=>()))
+          fut
+        })
+
+        val p3=Promise[Unit]()
+        val outSink3 = Sink
+//          .fold[Int, Int](0)(_+3*_)
+          .foreach[Int](v=>println("[got value] - "+v))
+          .mapMaterializedValue(fut=>{
+          fut.onComplete(v=>println("Sink 3 is finished with ["+v+"]"))
+          p3.completeWith(fut.map(_=>()))
           fut
         })
 
 
         bcast ~> outSink1
         bcast ~> outSink2
-
+        bcast ~> outSink3
 
         builder.materializedValue.map(_ => {
-          val totalFuture=whenAllComplete(p1.future,p2.future)
+          //can also use Future.sequence()
+          val totalFuture=whenAllComplete(p1.future,p2.future,p3.future)
           //println(totalFuture)
           totalFuture
         }).outlet ~> out1
