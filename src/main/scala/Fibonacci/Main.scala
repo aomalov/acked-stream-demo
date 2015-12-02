@@ -235,9 +235,6 @@ object Examples {
         system.shutdown()
     }
 
-    //println(Await.result(x1,3 seconds))
-    //println(Await.result(x2,3 seconds))
-
   }
 
   def builderTest2(implicit system:ActorSystem) = {
@@ -303,11 +300,6 @@ object Examples {
 
 
     val totalSink3: Sink[Future[Unit],Future[Future[Unit]]] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
-//      Sink.ignore.mapMaterializedValue(fut=>{
-//      val p=Promise[Unit]()
-//      p.completeWith(fut.map(_=>null))
-//      p
-//    })
 
     Sink(totalSink3) {
       implicit builder => out1 => {
@@ -330,7 +322,10 @@ object Examples {
         val p3=Promise[Unit]()
         val outSink3 = Sink
 //          .fold[Int, Int](0)(_+3*_)
-          .foreach[Int](v=>println("[got value] - "+v))
+          .foreach[Int](v=>{
+            println("[got value] - "+v)
+            if(v==101) throw new Exception("just a flow exception")
+        })
           .mapMaterializedValue(fut=>{
           fut.onComplete(v=>println("Sink 3 is finished with ["+v+"]"))
           p3.completeWith(fut.map(_=>()))
