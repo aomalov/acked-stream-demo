@@ -226,8 +226,17 @@ object Examples {
     implicit val materializer = ActorMaterializer()
 
 
-    val outerFuture =
-      Source(1 to 118).toMat(outputSink(system))(Keep.right).run()
+    val newSink=outputSink(system).mapMaterializedValue(nestedFuture=>{
+      val p=Promise[Unit]
+      nestedFuture.onComplete {
+        case Success(innerFuture) => p.completeWith(innerFuture)
+        case Failure(t) => throw new Exception(t)
+      }
+      FutureConverters.toJava(p.future.map(_ => null).mapTo[Void])
+    })
+
+    val outerFuture =Source(1 to 118).toMat(newSink)(Keep.right).run()
+//      Source(1 to 118).toMat()(combinerMaterializer).run()
 
     FutureConverters.toScala(outerFuture).onComplete {
       case Success(_) => println("succesful sink")
@@ -308,13 +317,13 @@ object Examples {
     println(Await.result(max, 300.millis))
   }
 
-  def outputSink(implicit system: ActorSystem): Sink[Int, CompletionStage[Void]] = {
+  def outputSink(implicit system: ActorSystem): Sink[Int, Future[Future[Unit]]] = {
     import akka.stream.scaladsl.FlowGraph.Implicits._
     implicit val ec = system.dispatcher
 
 
 
-    val totalSink3: Sink[Future[Unit],CompletionStage[Void]] = Flow[Future[Unit]].toMat(Sink.head)(combinerMaterializer)
+    val totalSink3: Sink[Future[Unit],Future[Future[Unit]]] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
 
     Sink(totalSink3) {
       implicit builder => out1 => {
