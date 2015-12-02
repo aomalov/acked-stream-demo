@@ -7,6 +7,7 @@ scalaVersion := "2.11.7"
 libraryDependencies ++= Seq(
 
 //  "com.typesafe.akka" % "akka-stream-experimental_2.11" % "2.0-M1" withSources() withJavadoc(),
+  "org.scala-lang.modules"      %% "scala-java8-compat"  % "0.3.0" withSources(),
   "com.typesafe.akka" %% "akka-stream-experimental" % "1.0" withSources() withJavadoc(),
   "com.timcharper" %% "acked-streams" % "1.0-RC1"  withSources() withJavadoc()
   //"com.twitter" % "util-eval" % "1.12.13"

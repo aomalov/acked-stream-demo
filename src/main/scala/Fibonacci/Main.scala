@@ -1,7 +1,9 @@
 package Fibonacci
 
 import java.math.BigInteger
+import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.function.BiFunction
 import akka.actor._
 import akka.stream._
 import akka.stream.actor._
@@ -10,6 +12,7 @@ import com.timcharper.acked._
 import routing.AckedRouter
 
 import scala.collection.mutable
+import scala.compat.java8.FutureConverters
 import scala.concurrent.{ExecutionContext, Future, Promise, Await}
 import akka.pattern.ask
 import akka.util.Timeout
@@ -226,19 +229,26 @@ object Examples {
     val outerFuture =
       Source(1 to 118).toMat(outputSink(system))(Keep.right).run()
 
-    val resultFuture=outerFuture match {
-      case fut:Future[Future[Unit]] =>
-        fut.onComplete {
-                case Success(nestedFuture) => println("successful outer future")
-                  nestedFuture.onComplete {
-                    case Success(_) => println("succesful sink")
-                      system.shutdown()
-                    case Failure(t) =>println("failed sink")
-                  }
-                case Failure(t) => println("failed outer future")
-              }
-      case _  => new Exception("bad flow materialization")
+    FutureConverters.toScala(outerFuture).onComplete {
+      case Success(_) => println("succesful sink")
+        system.shutdown()
+      case Failure(t) =>println("failed sink")
     }
+
+
+//    val resultFuture=outerFuture match {
+//      case fut:Future[Future[Unit]] =>
+//        fut.onComplete {
+//                case Success(nestedFuture) => println("successful outer future")
+//                  nestedFuture.onComplete {
+//                    case Success(_) => println("succesful sink")
+//                      system.shutdown()
+//                    case Failure(t) =>println("failed sink")
+//                  }
+//                case Failure(t) => println("failed outer future")
+//              }
+//      case _  => new Exception("bad flow materialization")
+//    }
 
   }
 
@@ -298,13 +308,13 @@ object Examples {
     println(Await.result(max, 300.millis))
   }
 
-  def outputSink(implicit system: ActorSystem): Sink[Int, Any] = {
+  def outputSink(implicit system: ActorSystem): Sink[Int, CompletionStage[Void]] = {
     import akka.stream.scaladsl.FlowGraph.Implicits._
     implicit val ec = system.dispatcher
 
 
 
-    val totalSink3: Sink[Future[Unit],Any] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
+    val totalSink3: Sink[Future[Unit],CompletionStage[Void]] = Flow[Future[Unit]].toMat(Sink.head)(combinerMaterializer)
 
     Sink(totalSink3) {
       implicit builder => out1 => {
@@ -422,6 +432,15 @@ object Examples {
     }
 
     p.future
+  }
+
+  def combinerMaterializer(ignored: Any, nestedFutureRight: Future[Future[Unit]])(implicit ec: ExecutionContext) = {
+    val p=Promise[Unit]
+    nestedFutureRight.onComplete {
+      case Success(innerFuture) => p.completeWith(innerFuture)
+      case Failure(t) => throw new Exception(t)
+    }
+    FutureConverters.toJava(p.future.map(_ => null).mapTo[Void])
   }
 
 }
