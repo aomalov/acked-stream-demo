@@ -226,13 +226,18 @@ object Examples {
     val outerFuture =
       Source(1 to 118).toMat(outputSink(system))(Keep.right).run()
 
-    val nestedFuture=Await.result(outerFuture,10 seconds)
-
-    nestedFuture.onComplete {
-      case Success(_) => println("successful sink")
-        system.shutdown()
-      case Failure(t) => println("failed sink")
-        system.shutdown()
+    val resultFuture=outerFuture match {
+      case fut:Future[Future[Unit]] =>
+        fut.onComplete {
+                case Success(nestedFuture) => println("successful outer future")
+                  nestedFuture.onComplete {
+                    case Success(_) => println("succesful sink")
+                      system.shutdown()
+                    case Failure(t) =>println("failed sink")
+                  }
+                case Failure(t) => println("failed outer future")
+              }
+      case _  => new Exception("bad flow materialization")
     }
 
   }
@@ -293,13 +298,13 @@ object Examples {
     println(Await.result(max, 300.millis))
   }
 
-  def outputSink(implicit system: ActorSystem): Sink[Int, Future[Future[Unit]]] = {
+  def outputSink(implicit system: ActorSystem): Sink[Int, Any] = {
     import akka.stream.scaladsl.FlowGraph.Implicits._
     implicit val ec = system.dispatcher
 
 
 
-    val totalSink3: Sink[Future[Unit],Future[Future[Unit]]] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
+    val totalSink3: Sink[Future[Unit],Any] = Flow[Future[Unit]].toMat(Sink.head)(Keep.right)
 
     Sink(totalSink3) {
       implicit builder => out1 => {
